@@ -73,21 +73,21 @@ resource "authentik_outpost" "ldap_generic" {
 }
 
 # Scope mapping
-data "authentik_scope_mapping" "scope_mappings" {
+data "authentik_property_mapping_provider_scope" "scope_mappings" {
   for_each = { for mapping in local.authentik_config.scope_mappings : mapping.name => mapping }
   managed_list = each.value.managed_list
 }
 
 # OAuth2 provider and application
 resource "authentik_provider_oauth2" "oauth2_providers" {
-  depends_on = [ data.authentik_scope_mapping.scope_mappings ]
+  depends_on = [ data.authentik_property_mapping_provider_scope.scope_mappings ]
 
   for_each          = { for provider in local.authentik_config.providers : provider.name => provider }
   name              = each.value.name
   client_id         = each.value.client_id
   client_secret     = each.value.client_secret
   authorization_flow = data.authentik_flow.default_authorization_flow.id
-  property_mappings = data.authentik_scope_mapping.scope_mappings[each.value.property_mappings].ids
+  property_mappings = data.authentik_property_mapping_provider_scope.scope_mappings[each.value.property_mappings].ids
   signing_key       = data.authentik_certificate_key_pair.default.id
   redirect_uris     = each.value.redirect_uris
 }
