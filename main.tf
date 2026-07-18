@@ -1,122 +1,207 @@
-data "authentik_flow" "default_authorization_flow" {
-  slug = "default-provider-authorization-implicit-consent"
+# ---------------------------------------------------------------------------
+# Data sources (re-read every plan; no destroy risk)
+# ---------------------------------------------------------------------------
+
+data "authentik_flow" "authorization" {
+  slug = var.authorization_flow_slug
 }
 
-data "authentik_certificate_key_pair" "default" {
-  name = "authentik Self-signed Certificate"
+# Provider >= 2024.10 requires invalidation_flow on every provider resource.
+data "authentik_flow" "invalidation" {
+  slug = var.invalidation_flow_slug
 }
 
-# LDAP generic provider setup, as per Authentik documentation https://docs.goauthentik.io/docs/providers/ldap/generic_setup
-resource "authentik_stage_user_login" "ldap_generic" {
-  count = local.enable_generic_ldap_provider ? 1 : 0
-  name  = "ldap-generic-user-login"
+data "authentik_certificate_key_pair" "signing" {
+  name = var.signing_key_name
 }
 
-resource "authentik_stage_password" "ldap_generic" {
-  count = local.enable_generic_ldap_provider ? 1 : 0
-  name     = "ldap-generic-password"
-  backends = [
-    "authentik.core.auth.TokenBackend",
-    "authentik.core.auth.InbuiltBackend",
-    "authentik.sources.ldap.auth.LDAPBackend"
-  ]
+# OAuth2 scope property-mappings, resolved per application from managed identifiers.
+data "authentik_property_mapping_provider_scope" "oauth2" {
+  for_each     = { for k, a in local.oauth2_applications : k => a if length(a.scopes) > 0 }
+  managed_list = each.value.scopes
 }
 
-resource "authentik_stage_identification" "ldap_generic" {
-  count          = local.enable_generic_ldap_provider ? 1 : 0
-  name           = "ldap-generic-identification"
-  user_fields    = ["username", "email"]
-  password_stage = authentik_stage_password.ldap_generic[0].id
-}
+# ---------------------------------------------------------------------------
+# OAuth2 applications + providers
+# for_each key = application map key ("jenkins"/"grafana"), preserving the
+# existing authentik_provider_oauth2.oauth2_providers[...] state addresses.
+# ---------------------------------------------------------------------------
 
-resource "authentik_flow" "ldap_generic" {
-  count       = local.enable_generic_ldap_provider ? 1 : 0
-  name        = "ldap-generic-flow"
-  title       = "ldap-generic-flow"
-  slug        = "ldap-generic-flow"
-  designation = "authentication"
-}
-
-resource "authentik_flow_stage_binding" "ldap_generic_identification" {
-  count  = local.enable_generic_ldap_provider ? 1 : 0
-  stage  = authentik_stage_identification.ldap_generic[0].id
-  target = authentik_flow.ldap_generic[0].uuid
-  order  = 10
-}
-
-resource "authentik_flow_stage_binding" "ldap_generic_login" {
-  count  = local.enable_generic_ldap_provider ? 1 : 0
-  stage  = authentik_stage_user_login.ldap_generic[0].id
-  target = authentik_flow.ldap_generic[0].uuid
-  order  = 30
-}
-
-resource "authentik_provider_ldap" "generic" {
-  count   = local.enable_generic_ldap_provider ? 1 : 0
-  name    = "ldap-generic-provider"
-  base_dn = local.ldap_provider_base_dn
-  bind_flow = authentik_flow.ldap_generic[0].uuid
-}
-
-resource "authentik_application" "ldap_generic" {
-  count            = local.enable_generic_ldap_provider ? 1 : 0
-  name             = "ldap-generic"
-  slug             = "ldap-generic"
-  protocol_provider = authentik_provider_ldap.generic[0].id
-}
-
-resource "authentik_outpost" "ldap_generic" {
-  count              = local.enable_generic_ldap_provider ? 1 : 0
-  name               = "ldap-generic"
-  type               = "ldap"
-  protocol_providers = [authentik_provider_ldap.generic[0].id]
-}
-
-# Scope mapping
-data "authentik_property_mapping_provider_scope" "scope_mappings" {
-  for_each = { for mapping in local.authentik_config.scope_mappings : mapping.name => mapping }
-  managed_list = each.value.managed_list
-}
-
-# OAuth2 provider and application
 resource "authentik_provider_oauth2" "oauth2_providers" {
-  depends_on = [ data.authentik_property_mapping_provider_scope.scope_mappings ]
+  for_each = local.oauth2_applications
 
-  for_each          = { for provider in local.authentik_config.providers : provider.name => provider }
-  name              = each.value.name
-  client_id         = each.value.client_id
-  client_secret     = each.value.client_secret
-  authorization_flow = data.authentik_flow.default_authorization_flow.id
-  property_mappings = data.authentik_property_mapping_provider_scope.scope_mappings[each.value.property_mappings].ids
-  signing_key       = data.authentik_certificate_key_pair.default.id
-  redirect_uris     = each.value.redirect_uris
+  name               = each.value.name
+  client_id          = each.value.client_id
+  client_secret      = each.value.client_secret
+  client_type        = each.value.client_type
+  authorization_flow = data.authentik_flow.authorization.id
+  invalidation_flow  = data.authentik_flow.invalidation.id
+  signing_key        = data.authentik_certificate_key_pair.signing.id
+  property_mappings  = length(each.value.scopes) > 0 ? try(data.authentik_property_mapping_provider_scope.oauth2[each.key].ids, null) : null
+
+  allowed_redirect_uris = [
+    for r in each.value.redirect_uris : {
+      matching_mode = r.matching_mode
+      url           = r.url
+    }
+  ]
+
+  sub_mode                   = each.value.sub_mode
+  include_claims_in_id_token = each.value.include_claims_in_id_token
+  issuer_mode                = each.value.issuer_mode
+  access_code_validity       = each.value.access_code_validity
+  access_token_validity      = each.value.access_token_validity
+  refresh_token_validity     = each.value.refresh_token_validity
 }
 
-resource "authentik_application" "applications" {
-  for_each          = { for app in local.authentik_config.applications : app.name => app }
-  name              = each.value.name
-  slug              = each.value.slug
-  protocol_provider = authentik_provider_oauth2.oauth2_providers[each.value.provider].id
+resource "authentik_application" "oauth2_applications" {
+  for_each = local.oauth2_applications
+
+  name               = each.value.name
+  slug               = each.value.slug
+  protocol_provider  = authentik_provider_oauth2.oauth2_providers[each.key].id
+  group              = each.value.group
+  meta_description   = each.value.meta_description
+  meta_publisher     = each.value.meta_publisher
+  meta_launch_url    = each.value.meta_launch_url
+  meta_icon          = each.value.meta_icon
+  open_in_new_tab    = each.value.open_in_new_tab
+  policy_engine_mode = each.value.policy_engine_mode
 }
 
-# Users and groups
+# State preservation: authentik_application.applications was renamed to
+# authentik_application.oauth2_applications. This whole-resource move keeps every
+# instance key (e.g. "jenkins", "grafana") without a destroy/replace and is a
+# no-op for fresh consumers that never had the old address.
+moved {
+  from = authentik_application.applications
+  to   = authentik_application.oauth2_applications
+}
+
+# ---------------------------------------------------------------------------
+# Proxy applications + providers
+# Separate resource blocks so the OAuth2-backed addresses above stay untouched.
+# ---------------------------------------------------------------------------
+
+resource "authentik_provider_proxy" "proxy_providers" {
+  for_each = local.proxy_applications
+
+  name                         = each.value.name
+  authorization_flow           = data.authentik_flow.authorization.id
+  invalidation_flow            = data.authentik_flow.invalidation.id
+  external_host                = each.value.external_host
+  internal_host                = each.value.internal_host
+  mode                         = each.value.mode
+  intercept_header_auth        = each.value.intercept_header_auth
+  internal_host_ssl_validation = each.value.internal_host_ssl_validation
+  skip_path_regex              = each.value.skip_path_regex
+}
+
+resource "authentik_application" "proxy_applications" {
+  for_each = local.proxy_applications
+
+  name               = each.value.name
+  slug               = each.value.slug
+  protocol_provider  = authentik_provider_proxy.proxy_providers[each.key].id
+  group              = each.value.group
+  meta_description   = each.value.meta_description
+  meta_publisher     = each.value.meta_publisher
+  meta_launch_url    = each.value.meta_launch_url
+  meta_icon          = each.value.meta_icon
+  open_in_new_tab    = each.value.open_in_new_tab
+  policy_engine_mode = each.value.policy_engine_mode
+}
+
+# ---------------------------------------------------------------------------
+# Directory: users, groups, service accounts
+# ---------------------------------------------------------------------------
+
 resource "authentik_user" "users" {
-  for_each = { for user in local.authentik_config.users : user.username => user }
-  username = each.value.username
-  email    = each.value.email
-  name     = each.value.name
-  password = each.value.password
-  type     = lookup(each.value, "type", "internal")
+  # Keyed by username to preserve existing authentik_user.users[...] addresses.
+  for_each = var.users
+
+  username   = each.key
+  name       = each.value.name
+  email      = each.value.email
+  password   = each.value.password
+  type       = each.value.type
+  path       = each.value.path
+  is_active  = each.value.is_active
+  attributes = each.value.attributes
 
   lifecycle {
-    ignore_changes = [
-      password
-    ]
+    # Password lifecycle is owned by authentik; never reconciled after create.
+    ignore_changes = [password]
   }
 }
 
 resource "authentik_group" "groups" {
-  for_each = { for group in local.authentik_config.groups : group.name => group }
+  # Keyed by group name to preserve existing authentik_group.groups[...] addresses.
+  for_each = var.groups
+
+  name         = each.key
+  is_superuser = each.value.is_superuser
+  attributes   = each.value.attributes
+  users        = [for m in each.value.members : local.user_pks[m]]
+}
+
+resource "authentik_user" "service_accounts" {
+  for_each = var.service_accounts
+
+  username = coalesce(each.value.username, each.key)
   name     = each.value.name
-  users    = [for user in each.value.users : authentik_user.users[user].id]
+  type     = "service_account"
+}
+
+resource "authentik_token" "service_accounts" {
+  for_each = var.service_accounts
+
+  identifier   = coalesce(each.value.token_identifier, "${each.key}-app-password")
+  user         = authentik_user.service_accounts[each.key].id
+  intent       = "app_password"
+  expiring     = false
+  retrieve_key = true
+}
+
+# ---------------------------------------------------------------------------
+# Proxy outposts (container deployed externally, connects with a token)
+# ---------------------------------------------------------------------------
+
+resource "authentik_outpost" "proxy" {
+  for_each = var.outposts
+
+  name               = each.key
+  type               = "proxy"
+  protocol_providers = [for appkey in each.value.applications : local.proxy_provider_ids[appkey]]
+
+  config = jsonencode({
+    authentik_host          = coalesce(each.value.config.authentik_host, var.authentik_url)
+    authentik_host_insecure = each.value.config.authentik_host_insecure
+    authentik_host_browser  = each.value.config.authentik_host_browser
+    log_level               = each.value.config.log_level
+  })
+
+  lifecycle {
+    # authentik enriches the outpost config with server-managed defaults
+    # (kubernetes_* fields, object_naming_template, ...) not expressed here,
+    # which otherwise produce a perpetual diff. Config is applied on create and
+    # ignored thereafter; change it in the authentik UI or temporarily lift this.
+    ignore_changes = [config]
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Policy bindings
+# ---------------------------------------------------------------------------
+
+resource "authentik_policy_binding" "bindings" {
+  for_each = local.policy_bindings
+
+  target         = local.application_uuids[each.value.application]
+  group          = each.value.group != null ? local.group_ids[each.value.group] : null
+  user           = each.value.user != null ? local.user_pks[each.value.user] : null
+  order          = each.value.order
+  enabled        = each.value.enabled
+  negate         = each.value.negate
+  failure_result = each.value.failure_result
 }
