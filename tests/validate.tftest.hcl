@@ -17,6 +17,11 @@ mock_provider "authentik" {
   mock_resource "authentik_user" {
     defaults = { id = "3" }
   }
+  # Outpost id is the outpost UUID (dashed); the SA-username lookup strips the dashes to
+  # the .hex form, so pin a realistic dashed UUID here.
+  mock_resource "authentik_outpost" {
+    defaults = { id = "550e8400-e29b-41d4-a716-446655440000" }
+  }
   # authentik_user is also read as a DATA source (outpost service-account lookup); its
   # String id feeds the Number `user` field on authentik_token, so pin a numeric id.
   mock_data "authentik_user" {
@@ -118,8 +123,8 @@ run "outpost_api_token_minted" {
   command = apply
 
   assert {
-    condition     = data.authentik_user.outpost_sa["proxy-outpost"].username == "ak-outpost-proxy-outpost"
-    error_message = "outpost SA data source should look up ak-outpost-<outpost name>."
+    condition     = data.authentik_user.outpost_sa["proxy-outpost"].username == "ak-outpost-550e8400e29b41d4a716446655440000"
+    error_message = "outpost SA lookup should be ak-outpost-<outpost uuid.hex> (dashless)."
   }
 
   assert {

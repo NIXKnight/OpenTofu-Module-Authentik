@@ -16,8 +16,9 @@ locals {
     for k, a in local.proxy_applications : k => authentik_provider_proxy.proxy_providers[k].id
   }
 
-  # authentik auto-creates a service account named "ak-outpost-<outpost name>" for
-  # each outpost. Centralized here so a provider-side naming change is a one-line edit.
+  # authentik names each outpost's service account "ak-outpost-<uuid.hex>" — the prefix
+  # plus the outpost UUID in dashless hex form (authentik outposts/models.py
+  # user_identifier). Centralized so a naming-scheme change is a one-line edit.
   outpost_sa_prefix = "ak-outpost-"
 
   # Group ids keyed by group key.

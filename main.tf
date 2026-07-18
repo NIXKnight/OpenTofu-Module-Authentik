@@ -192,19 +192,19 @@ resource "authentik_outpost" "proxy" {
 # Module-minted outpost API tokens.
 # authentik auto-generates a token for each outpost's service account, but provider
 # 2024.10.x exposes no readable attribute for it. This mints a PARALLEL, non-expiring
-# API token on the same service account ("ak-outpost-<name>") so the outpost connection
-# credential is retrievable via `terragrunt output`. The auto-generated token stays in
-# authentik untouched; this token authenticates the same service account and is expected
-# to be accepted by the external proxy via the user<->outpost association (verified
-# operationally in Phase 4; fallback is the UI-issued token).
+# API token on the same service account ("ak-outpost-<uuid.hex>") so the outpost
+# connection credential is retrievable via `terragrunt output`. The auto-generated token
+# stays in authentik untouched; this token authenticates the same service account and is
+# expected to be accepted by the external proxy via the user<->outpost association
+# (verified operationally in Phase 4; fallback is the UI-issued token).
 data "authentik_user" "outpost_sa" {
   for_each = var.outposts
 
-  username = "${local.outpost_sa_prefix}${each.key}"
-
-  # Defer the lookup until the outpost (and its auto-created service account) exists on
-  # a first-time apply.
-  depends_on = [authentik_outpost.proxy]
+  # authentik names each outpost's service account "ak-outpost-<uuid.hex>" (dashless).
+  # authentik_outpost.id is the outpost UUID (dashed string, set from the API Pk), so
+  # strip the dashes to get the .hex form. Referencing the outpost id directly also
+  # creates the implicit dependency, deferring this read until the id is known.
+  username = "${local.outpost_sa_prefix}${replace(authentik_outpost.proxy[each.key].id, "-", "")}"
 }
 
 resource "authentik_token" "outpost_api" {
