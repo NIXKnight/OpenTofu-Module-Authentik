@@ -189,6 +189,40 @@ resource "authentik_outpost" "proxy" {
   }
 }
 
+# Module-minted outpost API tokens.
+# authentik auto-generates a token for each outpost's service account, but provider
+# 2024.10.x exposes no readable attribute for it. This mints a PARALLEL, non-expiring
+# API token on the same service account ("ak-outpost-<name>") so the outpost connection
+# credential is retrievable via `terragrunt output`. The auto-generated token stays in
+# authentik untouched; this token authenticates the same service account and is expected
+# to be accepted by the external proxy via the user<->outpost association (verified
+# operationally in Phase 4; fallback is the UI-issued token).
+data "authentik_user" "outpost_sa" {
+  for_each = var.outposts
+
+  username = "${local.outpost_sa_prefix}${each.key}"
+
+  # Defer the lookup until the outpost (and its auto-created service account) exists on
+  # a first-time apply.
+  depends_on = [authentik_outpost.proxy]
+}
+
+resource "authentik_token" "outpost_api" {
+  for_each = var.outposts
+
+  identifier = "${each.key}-tf-api"
+
+  # `user` is a Number; the data source's `id` is a numeric String that OpenTofu coerces
+  # to the field type, matching the existing authentik_token.service_accounts idiom.
+  # (`.pk` is a native Number alternative, but `.id` keeps the two token resources
+  # consistent.)
+  user         = data.authentik_user.outpost_sa[each.key].id
+  intent       = "api"
+  expiring     = false
+  retrieve_key = true
+  description  = "Terraform-managed API token for the ${each.key} proxy outpost (parallel to authentik's auto-generated outpost token)."
+}
+
 # ---------------------------------------------------------------------------
 # Policy bindings
 # ---------------------------------------------------------------------------

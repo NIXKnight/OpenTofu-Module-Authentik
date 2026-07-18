@@ -16,6 +16,10 @@ locals {
     for k, a in local.proxy_applications : k => authentik_provider_proxy.proxy_providers[k].id
   }
 
+  # authentik auto-creates a service account named "ak-outpost-<outpost name>" for
+  # each outpost. Centralized here so a provider-side naming change is a one-line edit.
+  outpost_sa_prefix = "ak-outpost-"
+
   # Group ids keyed by group key.
   group_ids = { for k, g in var.groups : k => authentik_group.groups[k].id }
 

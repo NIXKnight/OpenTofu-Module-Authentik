@@ -17,6 +17,11 @@ mock_provider "authentik" {
   mock_resource "authentik_user" {
     defaults = { id = "3" }
   }
+  # authentik_user is also read as a DATA source (outpost service-account lookup); its
+  # String id feeds the Number `user` field on authentik_token, so pin a numeric id.
+  mock_data "authentik_user" {
+    defaults = { id = "9" }
+  }
 }
 
 variables {
@@ -103,5 +108,37 @@ run "plan_both_application_types" {
   assert {
     condition     = authentik_token.service_accounts["automation"].intent == "app_password"
     error_message = "service-account token should use the app_password intent."
+  }
+}
+
+# Apply against mocks so the outpost is "created" before the service-account data
+# source reads (the depends_on defers it at plan), exercising the new outpost API
+# token path end to end: data source lookup, token resource, and sensitive output.
+run "outpost_api_token_minted" {
+  command = apply
+
+  assert {
+    condition     = data.authentik_user.outpost_sa["proxy-outpost"].username == "ak-outpost-proxy-outpost"
+    error_message = "outpost SA data source should look up ak-outpost-<outpost name>."
+  }
+
+  assert {
+    condition     = authentik_token.outpost_api["proxy-outpost"].identifier == "proxy-outpost-tf-api"
+    error_message = "outpost API token identifier should be <outpost name>-tf-api."
+  }
+
+  assert {
+    condition     = authentik_token.outpost_api["proxy-outpost"].intent == "api"
+    error_message = "outpost API token should use the api intent."
+  }
+
+  assert {
+    condition     = authentik_token.outpost_api["proxy-outpost"].expiring == false
+    error_message = "outpost API token should be non-expiring."
+  }
+
+  assert {
+    condition     = length(output.outpost_tokens) == 1
+    error_message = "outpost_tokens output should expose one token key per outpost."
   }
 }

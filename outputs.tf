@@ -17,6 +17,13 @@ output "outpost_ids" {
   value       = { for k, o in authentik_outpost.proxy : k => o.id }
 }
 
-# Note: authentik_outpost (provider 2024.10.x) exposes no readable token attribute,
-# so the outpost's auto-generated token cannot be surfaced as an output. Retrieve it
-# from the authentik UI (Outposts view) after apply.
+output "outpost_tokens" {
+  description = "Module-minted API token keys per proxy outpost service account, keyed by outpost name."
+  sensitive   = true
+  value       = { for k, t in authentik_token.outpost_api : k => t.key }
+}
+
+# Note: authentik_outpost (provider 2024.10.x) exposes no readable attribute for the
+# outpost's OWN auto-generated token, so that token cannot be surfaced directly. The
+# `outpost_tokens` output above instead mints a parallel API token on the same service
+# account; retrieve the auto-generated one from the authentik UI if it is needed.
