@@ -27,3 +27,15 @@ output "outpost_tokens" {
 # outpost's OWN auto-generated token, so that token cannot be surfaced directly. The
 # `outpost_tokens` output above instead mints a parallel API token on the same service
 # account; retrieve the auto-generated one from the authentik UI if it is needed.
+
+output "oauth2_client_credentials" {
+  description = "Client ID and secret per OAuth2 application map key."
+  sensitive   = true
+  value = {
+    for k, p in authentik_provider_oauth2.oauth2_providers :
+    k => {
+      client_id     = p.client_id
+      client_secret = p.client_secret
+    }
+  }
+}
