@@ -39,11 +39,10 @@ resource "authentik_provider_oauth2" "oauth2_providers" {
   signing_key        = data.authentik_certificate_key_pair.signing.id
   property_mappings  = length(each.value.scopes) > 0 ? try(data.authentik_property_mapping_provider_scope.oauth2[each.key].ids, null) : null
 
-  # Pinned provider v2024.10.1 (api client v3.2024100.2) exposes redirect_uris as a
-  # flat list(string). The public variable keeps its {url, matching_mode?} shape, but
-  # per-URI matching_mode is DORMANT here until the server+provider move to the
-  # structured allowed_redirect_uris API (api >= v3.2024102.6 / provider >= 2024.10.2).
-  redirect_uris = [for r in each.value.redirect_uris : r.url]
+  # Provider 2026.5.0 takes the structured allowed_redirect_uris API (list of
+  # {url, matching_mode}), mapping directly onto the public variable's {url,
+  # matching_mode?} shape so per-URI matching_mode is now honored.
+  allowed_redirect_uris = [for r in each.value.redirect_uris : { url = r.url, matching_mode = r.matching_mode }]
 
   sub_mode                   = each.value.sub_mode
   include_claims_in_id_token = each.value.include_claims_in_id_token
