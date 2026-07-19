@@ -47,6 +47,10 @@ resource "authentik_provider_oauth2" "oauth2_providers" {
   # a permanent in-place plan diff on every oauth2 provider.
   allowed_redirect_uris = [for r in each.value.redirect_uris : { url = r.url, matching_mode = r.matching_mode, redirect_uri_type = r.redirect_uri_type }]
 
+  # authentik 2026.5 stores an EMPTY grant list for providers created fresh with
+  # grant_types unset, which blocks every authorize request; set it explicitly.
+  grant_types = each.value.grant_types
+
   sub_mode                   = each.value.sub_mode
   include_claims_in_id_token = each.value.include_claims_in_id_token
   issuer_mode                = each.value.issuer_mode

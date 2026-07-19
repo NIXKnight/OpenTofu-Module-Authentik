@@ -93,6 +93,15 @@ variable "applications" {
     access_code_validity       = optional(string)
     access_token_validity      = optional(string)
     refresh_token_validity     = optional(string)
+    # authentik 2026.5+ requires explicit grant selection; the API default for
+    # newly created providers is EMPTY (nothing allowed), so an unset grant_types
+    # bounces every authorize request with invalid_request before any login. Tight
+    # default covers the standard code+refresh flow; widen per-app when a use case
+    # needs it (known server values: authorization_code, refresh_token, implicit,
+    # hybrid, client_credentials, password,
+    # urn:ietf:params:oauth:grant-type:device_code — no validation enum, the server
+    # may extend the set).
+    grant_types = optional(list(string), ["authorization_code", "refresh_token"])
 
     # Proxy provider fields (type = "proxy").
     mode                         = optional(string, "proxy")
