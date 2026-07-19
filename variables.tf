@@ -78,6 +78,12 @@ variable "applications" {
     client_id     = optional(string)
     client_secret = optional(string)
     scopes        = optional(list(string), [])
+    # Custom provider scope-mapping keys (see var.custom_scope_mappings), concatenated
+    # with the managed `scopes` above into the provider's property_mappings. Use to
+    # attach a hand-written scope mapping (e.g. an email mapping returning
+    # email_verified=True for Vaultwarden) instead of a managed one: omit the managed
+    # scope from `scopes` and list the custom mapping's map key here.
+    custom_scopes = optional(list(string), [])
     redirect_uris = optional(list(object({
       url           = string
       matching_mode = optional(string, "strict")
@@ -153,6 +159,32 @@ variable "applications" {
     ]))
     error_message = "redirect_uris `matching_mode` must be one of: strict, regex."
   }
+}
+
+# ---------------------------------------------------------------------------
+# Custom OAuth2 provider scope mappings
+# ---------------------------------------------------------------------------
+
+variable "custom_scope_mappings" {
+  description = <<-EOT
+    Custom OAuth2 provider scope mappings, referenced from applications via each
+    OAuth2 application's `custom_scopes` list by map key. Each entry creates an
+    authentik_property_mapping_provider_scope resource whose `expression` is a Python
+    snippet evaluated by the server (e.g. `return {"email": request.user.email,
+    "email_verified": True}` to force email_verified=True for Vaultwarden, whose
+    OIDC client rejects an explicit false emitted by authentik's managed email scope
+    mapping since server >= 2025.10). Attach such a mapping by omitting the managed
+    scope from an application's `scopes` and listing this map key in `custom_scopes`.
+  EOT
+
+  type = map(object({
+    name        = string
+    scope_name  = string
+    description = optional(string, "")
+    expression  = string
+  }))
+
+  default = {}
 }
 
 # ---------------------------------------------------------------------------

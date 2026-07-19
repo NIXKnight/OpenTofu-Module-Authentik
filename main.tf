@@ -21,6 +21,18 @@ data "authentik_property_mapping_provider_scope" "oauth2" {
   managed_list = each.value.scopes
 }
 
+# Custom (hand-written) OAuth2 scope property-mappings. Created once per
+# custom_scope_mappings entry and attached to applications that list the map key in
+# their `custom_scopes`, alongside or instead of managed scope mappings.
+resource "authentik_property_mapping_provider_scope" "custom" {
+  for_each = var.custom_scope_mappings
+
+  name        = each.value.name
+  scope_name  = each.value.scope_name
+  description = each.value.description
+  expression  = each.value.expression
+}
+
 # ---------------------------------------------------------------------------
 # OAuth2 applications + providers
 # for_each key = application map key ("jenkins"/"grafana"), preserving the
@@ -37,7 +49,19 @@ resource "authentik_provider_oauth2" "oauth2_providers" {
   authorization_flow = data.authentik_flow.authorization.id
   invalidation_flow  = data.authentik_flow.invalidation.id
   signing_key        = data.authentik_certificate_key_pair.signing.id
-  property_mappings  = length(each.value.scopes) > 0 ? try(data.authentik_property_mapping_provider_scope.oauth2[each.key].ids, null) : null
+
+  # property_mappings = managed scope-mapping ids (resolved from `scopes`) concatenated
+  # with custom scope-mapping ids (resolved from `custom_scopes` map keys). Preserve the
+  # prior behavior of a null attribute when neither list is set, so providers with no
+  # scopes plan identically to before.
+  property_mappings = (
+    length(each.value.scopes) > 0 || length(each.value.custom_scopes) > 0
+    ? concat(
+      length(each.value.scopes) > 0 ? try(data.authentik_property_mapping_provider_scope.oauth2[each.key].ids, []) : [],
+      [for s in each.value.custom_scopes : authentik_property_mapping_provider_scope.custom[s].id]
+    )
+    : null
+  )
 
   # Provider 2026.5.0 takes the structured allowed_redirect_uris API (list of
   # {url, matching_mode, redirect_uri_type}). Each entry must carry
@@ -57,6 +81,16 @@ resource "authentik_provider_oauth2" "oauth2_providers" {
   access_code_validity       = each.value.access_code_validity
   access_token_validity      = each.value.access_token_validity
   refresh_token_validity     = each.value.refresh_token_validity
+
+  lifecycle {
+    # Cross-variable check: every custom_scopes key must resolve to a
+    # custom_scope_mappings entry. Fail here with a clear message rather than letting
+    # the property_mappings index lookup surface a raw "invalid index" error.
+    precondition {
+      condition     = alltrue([for s in each.value.custom_scopes : contains(keys(var.custom_scope_mappings), s)])
+      error_message = "oauth2 application `${each.key}` references a `custom_scopes` key not defined in `custom_scope_mappings`."
+    }
+  }
 }
 
 resource "authentik_application" "oauth2_applications" {

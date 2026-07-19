@@ -27,6 +27,11 @@ mock_provider "authentik" {
   mock_data "authentik_user" {
     defaults = { id = "9" }
   }
+  # Custom scope-mapping id is concatenated into a provider's property_mappings; pin it
+  # so the concat is known at plan.
+  mock_resource "authentik_property_mapping_provider_scope" {
+    defaults = { id = "sm-custom" }
+  }
 }
 
 variables {
@@ -55,6 +60,27 @@ variables {
       slug          = "portainer"
       external_host = "https://portainer.example.com"
       mode          = "forward_single"
+    }
+    # Custom-scope path: no managed `scopes`; the provider's property_mappings comes
+    # solely from the custom email mapping keyed "vaultwarden_email".
+    vaultwarden = {
+      type          = "oauth2"
+      name          = "Vaultwarden"
+      slug          = "vaultwarden"
+      client_id     = "vaultwarden"
+      client_secret = "mock-secret"
+      custom_scopes = ["vaultwarden_email"]
+      redirect_uris = [
+        { url = "https://vaultwarden.example.com/identity/connect/oidc-signin" },
+      ]
+    }
+  }
+
+  custom_scope_mappings = {
+    vaultwarden_email = {
+      name       = "vaultwarden-email-verified"
+      scope_name = "email"
+      expression = "return {\"email\": request.user.email, \"email_verified\": True}"
     }
   }
 
@@ -113,6 +139,21 @@ run "plan_both_application_types" {
   assert {
     condition     = authentik_token.service_accounts["automation"].intent == "app_password"
     error_message = "service-account token should use the app_password intent."
+  }
+
+  assert {
+    condition     = authentik_property_mapping_provider_scope.custom["vaultwarden_email"].scope_name == "email"
+    error_message = "custom scope mapping should be planned with scope_name=email."
+  }
+
+  assert {
+    condition     = length(authentik_provider_oauth2.oauth2_providers["vaultwarden"].property_mappings) == 1
+    error_message = "vaultwarden provider property_mappings should hold exactly the one custom scope-mapping id."
+  }
+
+  assert {
+    condition     = authentik_provider_oauth2.oauth2_providers["vaultwarden"].property_mappings[0] == "sm-custom"
+    error_message = "vaultwarden provider property_mappings should reference the custom scope-mapping id."
   }
 }
 
