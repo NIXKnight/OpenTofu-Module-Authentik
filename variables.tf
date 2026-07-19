@@ -81,6 +81,10 @@ variable "applications" {
     redirect_uris = optional(list(object({
       url           = string
       matching_mode = optional(string, "strict")
+      # authentik 2026.5 echoes this back on read (post-logout redirect URIs);
+      # carry it so state matches config. Free-form: server values beyond
+      # "authorization" are not confirmed in provider docs, so no enum validation.
+      redirect_uri_type = optional(string, "authorization")
     })), [])
     client_type                = optional(string, "confidential")
     sub_mode                   = optional(string)
